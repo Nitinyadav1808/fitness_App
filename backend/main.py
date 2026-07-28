@@ -1,3 +1,5 @@
+from database import engine, Base
+import models
 from fastapi import FastAPI
 from pydantic import BaseModel
 from enum import Enum
@@ -143,3 +145,7 @@ def generate_workout_split(request: WorkoutRequest):
         "goal": request.goal,
         "weekly_plan": weekly_plan
     }
+from database import engine, Base
+import models
+
+Base.metadata.create_all(bind=engine)
