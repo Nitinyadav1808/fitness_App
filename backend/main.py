@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from enum import Enum
 import joblib
+import os
+from google import genai
 import pandas as pd
 
 from database import engine, Base, get_db
@@ -17,6 +19,9 @@ Base.metadata.create_all(bind=engine)
 # Load ML model + encoder once at startup
 adjustment_model = joblib.load("adjustment_model.pkl")
 goal_encoder = joblib.load("goal_encoder.pkl")
+
+# Gemini client
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 # ---------- Enums ----------
@@ -135,6 +140,43 @@ def get_split_structure(days_per_week: int) -> list[str]:
     else:  # 5 or 6 days
         base = ["push", "pull", "legs"]
         return (base * 2)[:days_per_week]
+
+
+def compute_user_features(user_id: int, db: Session):
+    """Shared feature computation used by both the ML model and Gemini endpoints."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        return None, None
+
+    recent_logs = (
+        db.query(models.DailyLog)
+        .filter(models.DailyLog.user_id == user_id)
+        .order_by(models.DailyLog.log_date.desc())
+        .limit(7)
+        .all()
+    )
+
+    if len(recent_logs) < 2:
+        return user, None
+
+    total_logs = len(recent_logs)
+    workout_completed_logs = [l for l in recent_logs if l.workout_completed is not None]
+    sleep_logs = [l.sleep_hours for l in recent_logs if l.sleep_hours is not None]
+    soreness_logs = [l.soreness_rating for l in recent_logs if l.soreness_rating is not None]
+    weights = [l.weight_kg for l in recent_logs if l.weight_kg is not None]
+
+    features = {
+        "adherence_pct": round((total_logs / 7) * 100, 1),
+        "avg_sleep": round(sum(sleep_logs) / len(sleep_logs), 1) if sleep_logs else 7.0,
+        "avg_soreness": round(sum(soreness_logs) / len(soreness_logs), 1) if soreness_logs else 2.5,
+        "workout_completion_pct": round(
+            (sum(l.workout_completed for l in workout_completed_logs) / len(workout_completed_logs)) * 100, 1
+        ) if workout_completed_logs else 50.0,
+        "weight_change_kg": round((weights[0] - weights[-1]), 2) if len(weights) >= 2 else 0.0,
+        "days_logged": total_logs,
+    }
+
+    return user, features
 
 
 # ---------- Routes ----------
@@ -271,63 +313,68 @@ def get_logs(user_id: int, db: Session = Depends(get_db)):
 
 @app.get("/predict-adjustment/{user_id}")
 def predict_adjustment(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
+    user, features = compute_user_features(user_id, db)
+
+    if user is None:
         return {"error": "User not found"}
-
-    recent_logs = (
-        db.query(models.DailyLog)
-        .filter(models.DailyLog.user_id == user_id)
-        .order_by(models.DailyLog.log_date.desc())
-        .limit(7)
-        .all()
-    )
-
-    if len(recent_logs) < 2:
+    if features is None:
         return {"error": "Not enough log history yet. Log at least a few days first."}
-
-    total_logs = len(recent_logs)
-    workout_completed_logs = [l for l in recent_logs if l.workout_completed is not None]
-    sleep_logs = [l.sleep_hours for l in recent_logs if l.sleep_hours is not None]
-    soreness_logs = [l.soreness_rating for l in recent_logs if l.soreness_rating is not None]
-    weights = [l.weight_kg for l in recent_logs if l.weight_kg is not None]
-
-    adherence_pct = (total_logs / 7) * 100
-    avg_sleep = sum(sleep_logs) / len(sleep_logs) if sleep_logs else 7.0
-    avg_soreness = sum(soreness_logs) / len(soreness_logs) if soreness_logs else 2.5
-    workout_completion_pct = (
-        (sum(l.workout_completed for l in workout_completed_logs) / len(workout_completed_logs)) * 100
-        if workout_completed_logs else 50.0
-    )
-    weight_change_kg = (weights[0] - weights[-1]) if len(weights) >= 2 else 0.0
-    weeks_since_last_adjustment = 2  # placeholder until adjustment history is tracked
 
     goal_encoded = goal_encoder.transform([user.goal])[0]
 
-    features = pd.DataFrame([{
+    model_input = pd.DataFrame([{
         "goal_encoded": goal_encoded,
-        "adherence_pct": adherence_pct,
-        "avg_sleep": avg_sleep,
-        "avg_soreness": avg_soreness,
-        "workout_completion_pct": workout_completion_pct,
-        "weight_change_kg": weight_change_kg,
-        "weeks_since_last_adjustment": weeks_since_last_adjustment,
+        "adherence_pct": features["adherence_pct"],
+        "avg_sleep": features["avg_sleep"],
+        "avg_soreness": features["avg_soreness"],
+        "workout_completion_pct": features["workout_completion_pct"],
+        "weight_change_kg": features["weight_change_kg"],
+        "weeks_since_last_adjustment": 2,  # placeholder until adjustment history is tracked
     }])
 
-    prediction = adjustment_model.predict(features)[0]
-    probabilities = adjustment_model.predict_proba(features)[0]
+    prediction = adjustment_model.predict(model_input)[0]
+    probabilities = adjustment_model.predict_proba(model_input)[0]
     confidence = max(probabilities)
 
     return {
         "user_id": user_id,
         "recommendation": prediction,
         "confidence": round(float(confidence), 3),
-        "based_on": {
-            "days_logged": total_logs,
-            "adherence_pct": round(adherence_pct, 1),
-            "avg_sleep": round(avg_sleep, 1),
-            "avg_soreness": round(avg_soreness, 1),
-            "workout_completion_pct": round(workout_completion_pct, 1),
-            "weight_change_kg": round(weight_change_kg, 2),
-        }
+        "based_on": features,
+    }
+
+
+@app.get("/predict-adjustment-llm/{user_id}")
+def predict_adjustment_llm(user_id: int, db: Session = Depends(get_db)):
+    user, features = compute_user_features(user_id, db)
+
+    if user is None:
+        return {"error": "User not found"}
+    if features is None:
+        return {"error": "Not enough log history yet. Log at least a few days first."}
+
+    prompt = f"""You are a fitness coach AI. Based on this user's recent data, recommend ONE adjustment
+from this exact list: stay_course, reduce_calories, increase_calories, deload_week, increase_intensity.
+
+User goal: {user.goal}
+Days logged (last 7): {features['days_logged']}
+Adherence: {features['adherence_pct']}%
+Average sleep: {features['avg_sleep']} hours
+Average soreness (1-5 scale): {features['avg_soreness']}
+Workout completion rate: {features['workout_completion_pct']}%
+Weight change this week: {features['weight_change_kg']} kg
+
+Respond in this exact JSON format, nothing else:
+{{"recommendation": "<one_of_the_five_options>", "reasoning": "<one sentence explanation>"}}
+"""
+
+    response = gemini_client.models.generate_content(
+        model="gemini-flash-latest",
+        contents=prompt,
+    )
+
+    return {
+        "user_id": user_id,
+        "llm_response": response.text,
+        "based_on": features,
     }
