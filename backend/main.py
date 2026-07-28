@@ -75,3 +75,71 @@ def calculate_plan(user: UserStats):
             "carbs_g": round(carb_g, 1),
         }
     }
+class Equipment(str, Enum):
+    full_gym = "full_gym"
+    dumbbells_only = "dumbbells_only"
+    bodyweight_only = "bodyweight_only"
+
+class WorkoutRequest(BaseModel):
+    days_per_week: int
+    equipment: Equipment
+    goal: Goal
+
+EXERCISE_LIBRARY = {
+    "full_gym": {
+        "push": ["Bench Press", "Overhead Press", "Incline Dumbbell Press", "Tricep Pushdown", "Lateral Raises"],
+        "pull": ["Deadlift", "Barbell Row", "Lat Pulldown", "Face Pull", "Bicep Curl"],
+        "legs": ["Squat", "Leg Press", "Romanian Deadlift", "Leg Curl", "Calf Raise"],
+        "upper": ["Bench Press", "Barbell Row", "Overhead Press", "Lat Pulldown", "Bicep Curl", "Tricep Pushdown"],
+        "lower": ["Squat", "Deadlift", "Leg Press", "Leg Curl", "Calf Raise"],
+        "full_body": ["Squat", "Bench Press", "Barbell Row", "Overhead Press", "Deadlift"],
+    },
+    "dumbbells_only": {
+        "push": ["DB Bench Press", "DB Shoulder Press", "DB Incline Press", "Tricep Kickback", "Lateral Raises"],
+        "pull": ["DB Row", "DB Deadlift", "DB Pullover", "Rear Delt Fly", "DB Bicep Curl"],
+        "legs": ["Goblet Squat", "DB Romanian Deadlift", "DB Lunges", "DB Step Up", "Calf Raise"],
+        "upper": ["DB Bench Press", "DB Row", "DB Shoulder Press", "DB Bicep Curl", "Tricep Kickback"],
+        "lower": ["Goblet Squat", "DB Romanian Deadlift", "DB Lunges", "Calf Raise"],
+        "full_body": ["Goblet Squat", "DB Bench Press", "DB Row", "DB Shoulder Press", "DB Deadlift"],
+    },
+    "bodyweight_only": {
+        "push": ["Push Ups", "Pike Push Ups", "Dips", "Diamond Push Ups"],
+        "pull": ["Pull Ups", "Inverted Rows", "Superman Hold"],
+        "legs": ["Bodyweight Squat", "Lunges", "Glute Bridge", "Calf Raise"],
+        "upper": ["Push Ups", "Pull Ups", "Dips", "Inverted Rows"],
+        "lower": ["Bodyweight Squat", "Lunges", "Glute Bridge", "Calf Raise"],
+        "full_body": ["Bodyweight Squat", "Push Ups", "Pull Ups", "Lunges"],
+    },
+}
+
+def get_split_structure(days_per_week: int) -> list[str]:
+    if days_per_week <= 2:
+        return ["full_body"] * days_per_week
+    elif days_per_week == 3:
+        return ["full_body", "full_body", "full_body"]
+    elif days_per_week == 4:
+        return ["upper", "lower", "upper", "lower"]
+    else:  # 5 or 6 days
+        base = ["push", "pull", "legs"]
+        return (base * 2)[:days_per_week]
+
+@app.post("/generate-workout-split")
+def generate_workout_split(request: WorkoutRequest):
+    split_structure = get_split_structure(request.days_per_week)
+    equipment_key = request.equipment.value
+    weekly_plan = []
+
+    for day_num, day_type in enumerate(split_structure, start=1):
+        exercises = EXERCISE_LIBRARY[equipment_key][day_type]
+        weekly_plan.append({
+            "day": day_num,
+            "focus": day_type.replace("_", " ").title(),
+            "exercises": exercises
+        })
+
+    return {
+        "days_per_week": request.days_per_week,
+        "equipment": request.equipment,
+        "goal": request.goal,
+        "weekly_plan": weekly_plan
+    }
