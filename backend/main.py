@@ -1,3 +1,4 @@
+from datetime import date
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -62,6 +63,14 @@ class WorkoutRequest(BaseModel):
     days_per_week: int
     equipment: Equipment
     goal: Goal
+
+class DailyLogRequest(BaseModel):
+    user_id: int
+    weight_kg: float
+    sleep_hours: float
+    soreness_rating: int       # 1-5 scale
+    workout_completed: bool
+    calories_logged: float | None = None
 
 
 # ---------- Constants ----------
@@ -214,3 +223,41 @@ def generate_workout_split(request: WorkoutRequest, db: Session = Depends(get_db
     db.commit()
 
     return result
+
+
+@app.post("/log-day")
+def log_day(request: DailyLogRequest, db: Session = Depends(get_db)):
+    log_entry = models.DailyLog(
+        user_id=request.user_id,
+        weight_kg=request.weight_kg,
+        sleep_hours=request.sleep_hours,
+        soreness_rating=request.soreness_rating,
+        workout_completed=int(request.workout_completed),
+        calories_logged=request.calories_logged,
+    )
+    db.add(log_entry)
+    db.commit()
+    db.refresh(log_entry)
+    return {"message": "Log saved", "log_id": log_entry.id}
+
+
+@app.get("/logs/{user_id}")
+def get_logs(user_id: int, db: Session = Depends(get_db)):
+    logs = (
+        db.query(models.DailyLog)
+        .filter(models.DailyLog.user_id == user_id)
+        .order_by(models.DailyLog.log_date.desc())
+        .all()
+    )
+    return [
+        {
+            "id": log.id,
+            "log_date": log.log_date,
+            "weight_kg": log.weight_kg,
+            "sleep_hours": log.sleep_hours,
+            "soreness_rating": log.soreness_rating,
+            "workout_completed": log.workout_completed,
+            "calories_logged": log.calories_logged,
+        }
+        for log in logs
+    ]
