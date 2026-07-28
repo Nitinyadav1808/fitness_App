@@ -1,0 +1,38 @@
+# Python / FastAPI backend
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+*.db
+*.sqlite3
+
+# Node / React Native / Expo
+node_modules/
+.expo/
+.expo-shared/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+web-build/
+
+# ML artifacts
+ml/*.pkl
+ml/*.joblib
+ml/data/*.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# EAS build files
+*.aab
+*.apk
+credentials.json
