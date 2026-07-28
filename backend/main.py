@@ -1,10 +1,18 @@
-from database import engine, Base
-import models
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from enum import Enum
 
+from database import engine, Base, get_db
+import models
+
 app = FastAPI(title="Fitness App API", version="0.1.0")
+
+# Create tables on startup
+Base.metadata.create_all(bind=engine)
+
+
+# ---------- Enums ----------
 
 class Gender(str, Enum):
     male = "male"
@@ -22,13 +30,41 @@ class Goal(str, Enum):
     maintain = "maintain"
     bulk = "bulk"
 
+class Equipment(str, Enum):
+    full_gym = "full_gym"
+    dumbbells_only = "dumbbells_only"
+    bodyweight_only = "bodyweight_only"
+
+
+# ---------- Request schemas ----------
+
+class CreateUserRequest(BaseModel):
+    name: str
+    age: int
+    gender: Gender
+    height_cm: float
+    goal: Goal
+    activity_level: ActivityLevel
+    equipment: Equipment
+    days_per_week: int
+
 class UserStats(BaseModel):
+    user_id: int
     age: int
     gender: Gender
     weight_kg: float
     height_cm: float
     activity_level: ActivityLevel
     goal: Goal
+
+class WorkoutRequest(BaseModel):
+    user_id: int
+    days_per_week: int
+    equipment: Equipment
+    goal: Goal
+
+
+# ---------- Constants ----------
 
 ACTIVITY_MULTIPLIERS = {
     ActivityLevel.sedentary: 1.2,
@@ -43,49 +79,6 @@ GOAL_ADJUSTMENTS = {
     Goal.maintain: 0,
     Goal.bulk: 300,
 }
-
-@app.get("/")
-def read_root():
-    return {"message": "Fitness App backend is running"}
-
-@app.post("/calculate-plan")
-def calculate_plan(user: UserStats):
-    if user.gender == Gender.male:
-        bmr = (10 * user.weight_kg) + (6.25 * user.height_cm) - (5 * user.age) + 5
-    else:
-        bmr = (10 * user.weight_kg) + (6.25 * user.height_cm) - (5 * user.age) - 161
-
-    tdee = bmr * ACTIVITY_MULTIPLIERS[user.activity_level]
-    target_calories = tdee + GOAL_ADJUSTMENTS[user.goal]
-
-    protein_g = user.weight_kg * 2
-    protein_cal = protein_g * 4
-
-    fat_cal = target_calories * 0.25
-    fat_g = fat_cal / 9
-
-    carb_cal = target_calories - protein_cal - fat_cal
-    carb_g = carb_cal / 4
-
-    return {
-        "bmr": round(bmr, 1),
-        "tdee": round(tdee, 1),
-        "target_calories": round(target_calories, 1),
-        "macros": {
-            "protein_g": round(protein_g, 1),
-            "fat_g": round(fat_g, 1),
-            "carbs_g": round(carb_g, 1),
-        }
-    }
-class Equipment(str, Enum):
-    full_gym = "full_gym"
-    dumbbells_only = "dumbbells_only"
-    bodyweight_only = "bodyweight_only"
-
-class WorkoutRequest(BaseModel):
-    days_per_week: int
-    equipment: Equipment
-    goal: Goal
 
 EXERCISE_LIBRARY = {
     "full_gym": {
@@ -114,6 +107,9 @@ EXERCISE_LIBRARY = {
     },
 }
 
+
+# ---------- Helpers ----------
+
 def get_split_structure(days_per_week: int) -> list[str]:
     if days_per_week <= 2:
         return ["full_body"] * days_per_week
@@ -125,8 +121,72 @@ def get_split_structure(days_per_week: int) -> list[str]:
         base = ["push", "pull", "legs"]
         return (base * 2)[:days_per_week]
 
+
+# ---------- Routes ----------
+
+@app.get("/")
+def read_root():
+    return {"message": "Fitness App backend is running"}
+
+
+@app.post("/create-user")
+def create_user(request: CreateUserRequest, db: Session = Depends(get_db)):
+    new_user = models.User(
+        name=request.name,
+        age=request.age,
+        gender=request.gender.value,
+        height_cm=request.height_cm,
+        goal=request.goal.value,
+        activity_level=request.activity_level.value,
+        equipment=request.equipment.value,
+        days_per_week=request.days_per_week,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"message": "User created", "user_id": new_user.id}
+
+
+@app.post("/calculate-plan")
+def calculate_plan(user: UserStats, db: Session = Depends(get_db)):
+    if user.gender == Gender.male:
+        bmr = (10 * user.weight_kg) + (6.25 * user.height_cm) - (5 * user.age) + 5
+    else:
+        bmr = (10 * user.weight_kg) + (6.25 * user.height_cm) - (5 * user.age) - 161
+
+    tdee = bmr * ACTIVITY_MULTIPLIERS[user.activity_level]
+    target_calories = tdee + GOAL_ADJUSTMENTS[user.goal]
+
+    protein_g = user.weight_kg * 2
+    protein_cal = protein_g * 4
+    fat_cal = target_calories * 0.25
+    fat_g = fat_cal / 9
+    carb_cal = target_calories - protein_cal - fat_cal
+    carb_g = carb_cal / 4
+
+    result = {
+        "bmr": round(bmr, 1),
+        "tdee": round(tdee, 1),
+        "target_calories": round(target_calories, 1),
+        "macros": {
+            "protein_g": round(protein_g, 1),
+            "fat_g": round(fat_g, 1),
+            "carbs_g": round(carb_g, 1),
+        }
+    }
+
+    log_entry = models.DailyLog(
+        user_id=user.user_id,
+        weight_kg=user.weight_kg,
+    )
+    db.add(log_entry)
+    db.commit()
+
+    return result
+
+
 @app.post("/generate-workout-split")
-def generate_workout_split(request: WorkoutRequest):
+def generate_workout_split(request: WorkoutRequest, db: Session = Depends(get_db)):
     split_structure = get_split_structure(request.days_per_week)
     equipment_key = request.equipment.value
     weekly_plan = []
@@ -139,13 +199,18 @@ def generate_workout_split(request: WorkoutRequest):
             "exercises": exercises
         })
 
-    return {
+    result = {
         "days_per_week": request.days_per_week,
         "equipment": request.equipment,
         "goal": request.goal,
         "weekly_plan": weekly_plan
     }
-from database import engine, Base
-import models
 
-Base.metadata.create_all(bind=engine)
+    plan_entry = models.WorkoutPlan(
+        user_id=request.user_id,
+        plan_data=result,
+    )
+    db.add(plan_entry)
+    db.commit()
+
+    return result
