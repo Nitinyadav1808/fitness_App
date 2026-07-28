@@ -1,8 +1,10 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from enum import Enum
+import joblib
+import pandas as pd
 
 from database import engine, Base, get_db
 import models
@@ -11,6 +13,10 @@ app = FastAPI(title="Fitness App API", version="0.1.0")
 
 # Create tables on startup
 Base.metadata.create_all(bind=engine)
+
+# Load ML model + encoder once at startup
+adjustment_model = joblib.load("adjustment_model.pkl")
+goal_encoder = joblib.load("goal_encoder.pkl")
 
 
 # ---------- Enums ----------
@@ -261,3 +267,67 @@ def get_logs(user_id: int, db: Session = Depends(get_db)):
         }
         for log in logs
     ]
+
+
+@app.get("/predict-adjustment/{user_id}")
+def predict_adjustment(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        return {"error": "User not found"}
+
+    recent_logs = (
+        db.query(models.DailyLog)
+        .filter(models.DailyLog.user_id == user_id)
+        .order_by(models.DailyLog.log_date.desc())
+        .limit(7)
+        .all()
+    )
+
+    if len(recent_logs) < 2:
+        return {"error": "Not enough log history yet. Log at least a few days first."}
+
+    total_logs = len(recent_logs)
+    workout_completed_logs = [l for l in recent_logs if l.workout_completed is not None]
+    sleep_logs = [l.sleep_hours for l in recent_logs if l.sleep_hours is not None]
+    soreness_logs = [l.soreness_rating for l in recent_logs if l.soreness_rating is not None]
+    weights = [l.weight_kg for l in recent_logs if l.weight_kg is not None]
+
+    adherence_pct = (total_logs / 7) * 100
+    avg_sleep = sum(sleep_logs) / len(sleep_logs) if sleep_logs else 7.0
+    avg_soreness = sum(soreness_logs) / len(soreness_logs) if soreness_logs else 2.5
+    workout_completion_pct = (
+        (sum(l.workout_completed for l in workout_completed_logs) / len(workout_completed_logs)) * 100
+        if workout_completed_logs else 50.0
+    )
+    weight_change_kg = (weights[0] - weights[-1]) if len(weights) >= 2 else 0.0
+    weeks_since_last_adjustment = 2  # placeholder until adjustment history is tracked
+
+    goal_encoded = goal_encoder.transform([user.goal])[0]
+
+    features = pd.DataFrame([{
+        "goal_encoded": goal_encoded,
+        "adherence_pct": adherence_pct,
+        "avg_sleep": avg_sleep,
+        "avg_soreness": avg_soreness,
+        "workout_completion_pct": workout_completion_pct,
+        "weight_change_kg": weight_change_kg,
+        "weeks_since_last_adjustment": weeks_since_last_adjustment,
+    }])
+
+    prediction = adjustment_model.predict(features)[0]
+    probabilities = adjustment_model.predict_proba(features)[0]
+    confidence = max(probabilities)
+
+    return {
+        "user_id": user_id,
+        "recommendation": prediction,
+        "confidence": round(float(confidence), 3),
+        "based_on": {
+            "days_logged": total_logs,
+            "adherence_pct": round(adherence_pct, 1),
+            "avg_sleep": round(avg_sleep, 1),
+            "avg_soreness": round(avg_soreness, 1),
+            "workout_completion_pct": round(workout_completion_pct, 1),
+            "weight_change_kg": round(weight_change_kg, 2),
+        }
+    }
