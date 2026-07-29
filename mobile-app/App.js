@@ -281,16 +281,28 @@ function AdjustmentScreen({ userId, onBack }) {
       {mlResult && (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>ML Model</Text>
-          <Text style={styles.cardText}>Recommendation: {mlResult.recommendation}</Text>
-          <Text style={styles.cardText}>Confidence: {(mlResult.confidence * 100).toFixed(1)}%</Text>
+          {mlResult.error ? (
+            <Text style={styles.cardText}>{mlResult.error}</Text>
+          ) : (
+            <>
+              <Text style={styles.cardText}>Recommendation: {mlResult.recommendation}</Text>
+              <Text style={styles.cardText}>Confidence: {(mlResult.confidence * 100).toFixed(1)}%</Text>
+            </>
+          )}
         </View>
       )}
 
-      {llmResult && llmResult.llm_response && (
+      {llmResult && (
         <View style={[styles.card, styles.cardGreen]}>
           <Text style={styles.cardTitle}>Gemini LLM</Text>
-          <Text style={styles.cardText}>Recommendation: {parseLLM(llmResult.llm_response).recommendation}</Text>
-          <Text style={styles.cardText}>Reasoning: {parseLLM(llmResult.llm_response).reasoning}</Text>
+          {llmResult.error ? (
+            <Text style={styles.cardText}>{llmResult.error}</Text>
+          ) : (
+            <>
+              <Text style={styles.cardText}>Recommendation: {parseLLM(llmResult.llm_response).recommendation}</Text>
+              <Text style={styles.cardText}>Reasoning: {parseLLM(llmResult.llm_response).reasoning}</Text>
+            </>
+          )}
         </View>
       )}
 

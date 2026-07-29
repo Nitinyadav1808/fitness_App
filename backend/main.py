@@ -12,7 +12,15 @@ from database import engine, Base, get_db
 import models
 
 app = FastAPI(title="Fitness App API", version="0.1.0")
+from fastapi.middleware.cors import CORSMiddleware
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Create tables on startup
 Base.metadata.create_all(bind=engine)
 
