@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useState } from 'react';
 
-const API_URL = 'http://192.168.1.13:8000';
+const API_URL = 'https://fitness-app-backend-z59o.onrender.com';
 
 // ---------- Screens ----------
 
