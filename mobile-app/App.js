@@ -1,8 +1,96 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
-import { useState } from 'react';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, Animated, Pressable, ActivityIndicator } from 'react-native';
+import { useState, useRef, useEffect } from 'react';
+import * as Haptics from 'expo-haptics';
 
 const API_URL = 'https://fitness-app-backend-z59o.onrender.com';
+
+// ---------- Reusable animated button ----------
+
+function AnimatedButton({ onPress, style, textStyle, children, disabled }) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scale, { toValue: 0.95, useNativeDriver: true, speed: 50 }).start();
+  };
+  const handlePressOut = () => {
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+  };
+  const handlePress = () => {
+    if (disabled) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onPress();
+  };
+
+  return (
+    <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} onPress={handlePress} disabled={disabled}>
+      <Animated.View style={[style, { transform: [{ scale }] }, disabled && { opacity: 0.6 }]}>
+        {typeof children === 'string' ? <Text style={textStyle}>{children}</Text> : children}
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+// ---------- Reusable animated chip ----------
+
+function AnimatedChip({ active, onPress, label }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const handlePressIn = () => Animated.spring(scale, { toValue: 0.9, useNativeDriver: true, speed: 50 }).start();
+  const handlePressOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 30 }).start();
+  const handlePress = () => {
+    Haptics.selectionAsync();
+    onPress();
+  };
+  return (
+    <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} onPress={handlePress}>
+      <Animated.View style={[styles.chip, active && styles.chipActive, { transform: [{ scale }] }]}>
+        <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+// ---------- Fade-in wrapper for cards/lists ----------
+
+function FadeInView({ children, delay = 0, style }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(15)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 400, delay, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: 0, duration: 400, delay, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={[style, { opacity, transform: [{ translateY }] }]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// ---------- Screen transition wrapper ----------
+
+function ScreenTransition({ children, screenKey }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    opacity.setValue(0);
+    translateX.setValue(20);
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(translateX, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, [screenKey]);
+
+  return (
+    <Animated.View style={{ flex: 1, opacity, transform: [{ translateX }] }}>
+      {children}
+    </Animated.View>
+  );
+}
 
 // ---------- Screens ----------
 
@@ -17,12 +105,15 @@ function OnboardingScreen({ onComplete }) {
     equipment: 'dumbbells_only',
     days_per_week: '4',
   });
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
     if (!form.name || !form.age || !form.height_cm) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert('Missing fields', 'Please fill in name, age, and height.');
       return;
     }
+    setSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/create-user`, {
         method: 'POST',
@@ -36,6 +127,7 @@ function OnboardingScreen({ onComplete }) {
       });
       const data = await res.json();
       if (data.user_id) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onComplete(data.user_id);
       } else {
         Alert.alert('Error', 'Could not create user.');
@@ -43,70 +135,81 @@ function OnboardingScreen({ onComplete }) {
     } catch (e) {
       Alert.alert('Network Error', 'Could not connect to server. Check your API_URL.');
     }
+    setSubmitting(false);
   };
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
-      <Text style={styles.title}>fitness_App</Text>
-      <Text style={styles.subtitle}>Let's set up your profile</Text>
+      <FadeInView>
+        <Text style={styles.title}>fitness_App</Text>
+        <Text style={styles.subtitle}>Let's set up your profile</Text>
+      </FadeInView>
 
-      <Text style={styles.label}>Name</Text>
-      <TextInput style={styles.input} value={form.name} onChangeText={v => setForm({...form, name: v})} placeholder="Your name" />
+      <FadeInView delay={50}>
+        <Text style={styles.label}>Name</Text>
+        <TextInput style={styles.input} value={form.name} onChangeText={v => setForm({...form, name: v})} placeholder="Your name" placeholderTextColor="#666" />
+      </FadeInView>
 
-      <Text style={styles.label}>Age</Text>
-      <TextInput style={styles.input} value={form.age} onChangeText={v => setForm({...form, age: v})} placeholder="25" keyboardType="numeric" />
+      <FadeInView delay={100}>
+        <Text style={styles.label}>Age</Text>
+        <TextInput style={styles.input} value={form.age} onChangeText={v => setForm({...form, age: v})} placeholder="25" placeholderTextColor="#666" keyboardType="numeric" />
+      </FadeInView>
 
-      <Text style={styles.label}>Height (cm)</Text>
-      <TextInput style={styles.input} value={form.height_cm} onChangeText={v => setForm({...form, height_cm: v})} placeholder="178" keyboardType="numeric" />
+      <FadeInView delay={150}>
+        <Text style={styles.label}>Height (cm)</Text>
+        <TextInput style={styles.input} value={form.height_cm} onChangeText={v => setForm({...form, height_cm: v})} placeholder="178" placeholderTextColor="#666" keyboardType="numeric" />
+      </FadeInView>
 
-      <Text style={styles.label}>Gender</Text>
-      <View style={styles.row}>
-        {['male', 'female'].map(g => (
-          <TouchableOpacity key={g} style={[styles.chip, form.gender === g && styles.chipActive]} onPress={() => setForm({...form, gender: g})}>
-            <Text style={[styles.chipText, form.gender === g && styles.chipTextActive]}>{g}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={200}>
+        <Text style={styles.label}>Gender</Text>
+        <View style={styles.row}>
+          {['male', 'female'].map(g => (
+            <AnimatedChip key={g} label={g} active={form.gender === g} onPress={() => setForm({...form, gender: g})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <Text style={styles.label}>Goal</Text>
-      <View style={styles.row}>
-        {['cut', 'maintain', 'bulk'].map(g => (
-          <TouchableOpacity key={g} style={[styles.chip, form.goal === g && styles.chipActive]} onPress={() => setForm({...form, goal: g})}>
-            <Text style={[styles.chipText, form.goal === g && styles.chipTextActive]}>{g}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={250}>
+        <Text style={styles.label}>Goal</Text>
+        <View style={styles.row}>
+          {['cut', 'maintain', 'bulk'].map(g => (
+            <AnimatedChip key={g} label={g} active={form.goal === g} onPress={() => setForm({...form, goal: g})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <Text style={styles.label}>Activity Level</Text>
-      <View style={styles.row}>
-        {['sedentary', 'light', 'moderate', 'active', 'very_active'].map(a => (
-          <TouchableOpacity key={a} style={[styles.chip, form.activity_level === a && styles.chipActive]} onPress={() => setForm({...form, activity_level: a})}>
-            <Text style={[styles.chipText, form.activity_level === a && styles.chipTextActive]}>{a}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={300}>
+        <Text style={styles.label}>Activity Level</Text>
+        <View style={styles.row}>
+          {['sedentary', 'light', 'moderate', 'active', 'very_active'].map(a => (
+            <AnimatedChip key={a} label={a} active={form.activity_level === a} onPress={() => setForm({...form, activity_level: a})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <Text style={styles.label}>Equipment</Text>
-      <View style={styles.row}>
-        {['full_gym', 'dumbbells_only', 'bodyweight_only'].map(e => (
-          <TouchableOpacity key={e} style={[styles.chip, form.equipment === e && styles.chipActive]} onPress={() => setForm({...form, equipment: e})}>
-            <Text style={[styles.chipText, form.equipment === e && styles.chipTextActive]}>{e}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={350}>
+        <Text style={styles.label}>Equipment</Text>
+        <View style={styles.row}>
+          {['full_gym', 'dumbbells_only', 'bodyweight_only'].map(e => (
+            <AnimatedChip key={e} label={e} active={form.equipment === e} onPress={() => setForm({...form, equipment: e})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <Text style={styles.label}>Days per week</Text>
-      <View style={styles.row}>
-        {['2', '3', '4', '5', '6'].map(d => (
-          <TouchableOpacity key={d} style={[styles.chip, form.days_per_week === d && styles.chipActive]} onPress={() => setForm({...form, days_per_week: d})}>
-            <Text style={[styles.chipText, form.days_per_week === d && styles.chipTextActive]}>{d}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={400}>
+        <Text style={styles.label}>Days per week</Text>
+        <View style={styles.row}>
+          {['2', '3', '4', '5', '6'].map(d => (
+            <AnimatedChip key={d} label={d} active={form.days_per_week === d} onPress={() => setForm({...form, days_per_week: d})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <TouchableOpacity style={styles.button} onPress={handleSubmit}>
-        <Text style={styles.buttonText}>Get My Plan →</Text>
-      </TouchableOpacity>
+      <FadeInView delay={450}>
+        <AnimatedButton style={styles.button} textStyle={styles.buttonText} onPress={handleSubmit} disabled={submitting}>
+          {submitting ? <ActivityIndicator color="#fff" /> : 'Get My Plan →'}
+        </AnimatedButton>
+      </FadeInView>
       <StatusBar style="auto" />
     </ScrollView>
   );
@@ -127,6 +230,7 @@ function DashboardScreen({ userId, onLogDay, onViewAdjustment }) {
       });
       const data = await res.json();
       setPlan(data);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       Alert.alert('Error', 'Could not fetch plan.');
     }
@@ -135,29 +239,37 @@ function DashboardScreen({ userId, onLogDay, onViewAdjustment }) {
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
-      <Text style={styles.title}>Your Plan</Text>
-      <Text style={styles.subtitle}>User ID: {userId}</Text>
+      <FadeInView>
+        <Text style={styles.title}>Your Plan</Text>
+        <Text style={styles.subtitle}>User ID: {userId}</Text>
+      </FadeInView>
 
-      <TouchableOpacity style={styles.button} onPress={fetchPlan}>
-        <Text style={styles.buttonText}>{loading ? 'Loading...' : "Generate Today's Workout"}</Text>
-      </TouchableOpacity>
+      <FadeInView delay={50}>
+        <AnimatedButton style={styles.button} textStyle={styles.buttonText} onPress={fetchPlan} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : "Generate Today's Workout"}
+        </AnimatedButton>
+      </FadeInView>
 
-      {plan && plan.weekly_plan && plan.weekly_plan.map((day) => (
-        <View key={day.day} style={styles.card}>
+      {plan && plan.weekly_plan && plan.weekly_plan.map((day, i) => (
+        <FadeInView key={day.day} delay={i * 100} style={styles.card}>
           <Text style={styles.cardTitle}>Day {day.day} — {day.focus}</Text>
-          {day.exercises.map((ex, i) => (
-            <Text key={i} style={styles.cardText}>• {ex}</Text>
+          {day.exercises.map((ex, j) => (
+            <Text key={j} style={styles.cardText}>• {ex}</Text>
           ))}
-        </View>
+        </FadeInView>
       ))}
 
-      <TouchableOpacity style={[styles.button, styles.buttonSecondary]} onPress={onLogDay}>
-        <Text style={styles.buttonText}>Log Today →</Text>
-      </TouchableOpacity>
+      <FadeInView delay={100}>
+        <AnimatedButton style={[styles.button, styles.buttonSecondary]} textStyle={styles.buttonText} onPress={onLogDay}>
+          Log Today →
+        </AnimatedButton>
+      </FadeInView>
 
-      <TouchableOpacity style={[styles.button, styles.buttonGreen]} onPress={onViewAdjustment}>
-        <Text style={styles.buttonText}>View AI Adjustment →</Text>
-      </TouchableOpacity>
+      <FadeInView delay={150}>
+        <AnimatedButton style={[styles.button, styles.buttonGreen]} textStyle={styles.buttonText} onPress={onViewAdjustment}>
+          View AI Adjustment →
+        </AnimatedButton>
+      </FadeInView>
     </ScrollView>
   );
 }
@@ -171,8 +283,10 @@ function LogDayScreen({ userId, onDone }) {
     workout_completed: true,
     calories_logged: '',
   });
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/log-day`, {
         method: 'POST',
@@ -188,51 +302,63 @@ function LogDayScreen({ userId, onDone }) {
       });
       const data = await res.json();
       if (data.log_id) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert('Logged!', 'Your day has been saved.', [{ text: 'OK', onPress: onDone }]);
       }
     } catch (e) {
       Alert.alert('Error', 'Could not save log.');
     }
+    setSubmitting(false);
   };
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
-      <Text style={styles.title}>Log Today</Text>
+      <FadeInView><Text style={styles.title}>Log Today</Text></FadeInView>
 
-      <Text style={styles.label}>Weight (kg)</Text>
-      <TextInput style={styles.input} value={form.weight_kg} onChangeText={v => setForm({...form, weight_kg: v})} placeholder="74.5" keyboardType="numeric" />
+      <FadeInView delay={50}>
+        <Text style={styles.label}>Weight (kg)</Text>
+        <TextInput style={styles.input} value={form.weight_kg} onChangeText={v => setForm({...form, weight_kg: v})} placeholder="74.5" placeholderTextColor="#666" keyboardType="numeric" />
+      </FadeInView>
 
-      <Text style={styles.label}>Sleep (hours)</Text>
-      <TextInput style={styles.input} value={form.sleep_hours} onChangeText={v => setForm({...form, sleep_hours: v})} placeholder="7.5" keyboardType="numeric" />
+      <FadeInView delay={100}>
+        <Text style={styles.label}>Sleep (hours)</Text>
+        <TextInput style={styles.input} value={form.sleep_hours} onChangeText={v => setForm({...form, sleep_hours: v})} placeholder="7.5" placeholderTextColor="#666" keyboardType="numeric" />
+      </FadeInView>
 
-      <Text style={styles.label}>Soreness (1-5)</Text>
-      <View style={styles.row}>
-        {['1', '2', '3', '4', '5'].map(s => (
-          <TouchableOpacity key={s} style={[styles.chip, form.soreness_rating === s && styles.chipActive]} onPress={() => setForm({...form, soreness_rating: s})}>
-            <Text style={[styles.chipText, form.soreness_rating === s && styles.chipTextActive]}>{s}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={150}>
+        <Text style={styles.label}>Soreness (1-5)</Text>
+        <View style={styles.row}>
+          {['1', '2', '3', '4', '5'].map(s => (
+            <AnimatedChip key={s} label={s} active={form.soreness_rating === s} onPress={() => setForm({...form, soreness_rating: s})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <Text style={styles.label}>Workout Completed?</Text>
-      <View style={styles.row}>
-        {[true, false].map(v => (
-          <TouchableOpacity key={String(v)} style={[styles.chip, form.workout_completed === v && styles.chipActive]} onPress={() => setForm({...form, workout_completed: v})}>
-            <Text style={[styles.chipText, form.workout_completed === v && styles.chipTextActive]}>{v ? 'Yes' : 'No'}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FadeInView delay={200}>
+        <Text style={styles.label}>Workout Completed?</Text>
+        <View style={styles.row}>
+          {[true, false].map(v => (
+            <AnimatedChip key={String(v)} label={v ? 'Yes' : 'No'} active={form.workout_completed === v} onPress={() => setForm({...form, workout_completed: v})} />
+          ))}
+        </View>
+      </FadeInView>
 
-      <Text style={styles.label}>Calories logged (optional)</Text>
-      <TextInput style={styles.input} value={form.calories_logged} onChangeText={v => setForm({...form, calories_logged: v})} placeholder="2100" keyboardType="numeric" />
+      <FadeInView delay={250}>
+        <Text style={styles.label}>Calories logged (optional)</Text>
+        <TextInput style={styles.input} value={form.calories_logged} onChangeText={v => setForm({...form, calories_logged: v})} placeholder="2100" placeholderTextColor="#666" keyboardType="numeric" />
+      </FadeInView>
 
-      <TouchableOpacity style={styles.button} onPress={handleSubmit}>
-        <Text style={styles.buttonText}>Save Log →</Text>
-      </TouchableOpacity>
+      <FadeInView delay={300}>
+        <AnimatedButton style={styles.button} textStyle={styles.buttonText} onPress={handleSubmit} disabled={submitting}>
+          {submitting ? <ActivityIndicator color="#fff" /> : 'Save Log →'}
+        </AnimatedButton>
+      </FadeInView>
 
-      <TouchableOpacity style={[styles.button, styles.buttonSecondary]} onPress={onDone}>
-        <Text style={styles.buttonText}>← Back</Text>
-      </TouchableOpacity>
+      <FadeInView delay={350}>
+        <AnimatedButton style={[styles.button, styles.buttonSecondary]} textStyle={styles.buttonText} onPress={onDone}>
+          ← Back
+        </AnimatedButton>
+      </FadeInView>
     </ScrollView>
   );
 }
@@ -245,6 +371,8 @@ function AdjustmentScreen({ userId, onBack }) {
 
   const fetchAdjustments = async () => {
     setLoading(true);
+    setMlResult(null);
+    setLlmResult(null);
     try {
       const [mlRes, llmRes] = await Promise.all([
         fetch(`${API_URL}/predict-adjustment/${userId}`),
@@ -254,6 +382,7 @@ function AdjustmentScreen({ userId, onBack }) {
       const llm = await llmRes.json();
       setMlResult(ml);
       setLlmResult(llm);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       Alert.alert('Error', 'Could not fetch adjustments.');
     }
@@ -271,15 +400,26 @@ function AdjustmentScreen({ userId, onBack }) {
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
-      <Text style={styles.title}>AI Adjustment</Text>
-      <Text style={styles.subtitle}>ML model vs Gemini comparison</Text>
+      <FadeInView>
+        <Text style={styles.title}>AI Adjustment</Text>
+        <Text style={styles.subtitle}>ML model vs Gemini comparison</Text>
+      </FadeInView>
 
-      <TouchableOpacity style={styles.button} onPress={fetchAdjustments}>
-        <Text style={styles.buttonText}>{loading ? 'Analysing...' : 'Get Recommendations'}</Text>
-      </TouchableOpacity>
+      <FadeInView delay={50}>
+        <AnimatedButton style={styles.button} textStyle={styles.buttonText} onPress={fetchAdjustments} disabled={loading}>
+          {loading ? <ActivityIndicator color="#fff" /> : 'Get Recommendations'}
+        </AnimatedButton>
+      </FadeInView>
+
+      {loading && (
+        <FadeInView style={styles.card}>
+          <ActivityIndicator color="#4f46e5" size="small" />
+          <Text style={[styles.cardText, { marginTop: 8, textAlign: 'center' }]}>Analysing your data...</Text>
+        </FadeInView>
+      )}
 
       {mlResult && (
-        <View style={styles.card}>
+        <FadeInView delay={100} style={styles.card}>
           <Text style={styles.cardTitle}>ML Model</Text>
           {mlResult.error ? (
             <Text style={styles.cardText}>{mlResult.error}</Text>
@@ -289,11 +429,11 @@ function AdjustmentScreen({ userId, onBack }) {
               <Text style={styles.cardText}>Confidence: {(mlResult.confidence * 100).toFixed(1)}%</Text>
             </>
           )}
-        </View>
+        </FadeInView>
       )}
 
       {llmResult && (
-        <View style={[styles.card, styles.cardGreen]}>
+        <FadeInView delay={250} style={[styles.card, styles.cardGreen]}>
           <Text style={styles.cardTitle}>Gemini LLM</Text>
           {llmResult.error ? (
             <Text style={styles.cardText}>{llmResult.error}</Text>
@@ -303,12 +443,14 @@ function AdjustmentScreen({ userId, onBack }) {
               <Text style={styles.cardText}>Reasoning: {parseLLM(llmResult.llm_response).reasoning}</Text>
             </>
           )}
-        </View>
+        </FadeInView>
       )}
 
-      <TouchableOpacity style={[styles.button, styles.buttonSecondary]} onPress={onBack}>
-        <Text style={styles.buttonText}>← Back</Text>
-      </TouchableOpacity>
+      <FadeInView delay={350}>
+        <AnimatedButton style={[styles.button, styles.buttonSecondary]} textStyle={styles.buttonText} onPress={onBack}>
+          ← Back
+        </AnimatedButton>
+      </FadeInView>
     </ScrollView>
   );
 }
@@ -320,18 +462,26 @@ export default function App() {
   const [screen, setScreen] = useState('onboarding');
   const [userId, setUserId] = useState(null);
 
-  if (screen === 'onboarding') {
-    return <OnboardingScreen onComplete={(id) => { setUserId(id); setScreen('dashboard'); }} />;
-  }
-  if (screen === 'dashboard') {
-    return <DashboardScreen userId={userId} onLogDay={() => setScreen('log')} onViewAdjustment={() => setScreen('adjustment')} />;
-  }
-  if (screen === 'log') {
-    return <LogDayScreen userId={userId} onDone={() => setScreen('dashboard')} />;
-  }
-  if (screen === 'adjustment') {
-    return <AdjustmentScreen userId={userId} onBack={() => setScreen('dashboard')} />;
-  }
+  const renderScreen = () => {
+    if (screen === 'onboarding') {
+      return <OnboardingScreen onComplete={(id) => { setUserId(id); setScreen('dashboard'); }} />;
+    }
+    if (screen === 'dashboard') {
+      return <DashboardScreen userId={userId} onLogDay={() => setScreen('log')} onViewAdjustment={() => setScreen('adjustment')} />;
+    }
+    if (screen === 'log') {
+      return <LogDayScreen userId={userId} onDone={() => setScreen('dashboard')} />;
+    }
+    if (screen === 'adjustment') {
+      return <AdjustmentScreen userId={userId} onBack={() => setScreen('dashboard')} />;
+    }
+  };
+
+  return (
+    <ScreenTransition screenKey={screen}>
+      {renderScreen()}
+    </ScreenTransition>
+  );
 }
 
 
@@ -402,6 +552,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 20,
+    minHeight: 52,
+    justifyContent: 'center',
   },
   buttonSecondary: {
     backgroundColor: '#1e1e1e',
